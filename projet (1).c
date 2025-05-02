@@ -6,7 +6,7 @@
 #include<time.h>
 
 
-#define NB_BUS 10
+#define NB_BUS 9
 #define NB_BUS_X 5
 #define NB_BUS_Y 4
 #define NB_ALLER_RETOUR 10
@@ -30,7 +30,7 @@ typedef struct {
 // FONCTION DU TRAJET D'UN BUS
 
 void entrer_tunnel(char ville_depart){
-  pthread_mutex_lock(&mutex); //Bus demande à entrer dans le tunnel
+  pthread_mutex_lock(&mutex); //Bus demande à entrer dans le tunnel, entrée dans SC
   
   if(ville_depart == 'X'){
     attente_x++; //On signale que ce bus ettend à X
@@ -50,7 +50,7 @@ void entrer_tunnel(char ville_depart){
     attente_y++;
     while(sens == 1 || (sens ==0 && attente_x > 0 )){
       pthread_mutex_unlock(&mutex);
-      usleep(100000);
+      usleep(100000); //Attente de 0.1 seconde
       pthread_mutex_lock(&mutex);
     } 
     attente_y--;  //ce bus n'attend plus, il va entrer
@@ -123,10 +123,11 @@ int main(){
   
   printf("===== DEMARRAGE DU SYSTEME ======\n \n");
   
-  //1- Création des threads/bus
-  for(int i=0; i< NB_BUS; i++){
+  //1- Création des 5 bus de X
+  printf("[MAIN] Création les 5 bus de 'X' \n");
+  for(int i=0; i< NB_BUS_X; i++){
     bus[i].id = i+1;
-    bus[i].ville_depart = (rand() % 2 == 0) ? 'X' : 'Y';
+    bus[i].ville_depart = 'X' ;
     
     printf("[MAIN] Création du bus %d au départ de %c \n", bus[i].id, bus[i].ville_depart);
     
@@ -136,9 +137,24 @@ int main(){
     }
   }
   
+  //2- Création des 4 bus de Y
+  printf("[MAIN] Création les 4 bus de 'Y' \n");
+  for(int i=0; i< NB_BUS_Y; i++){
+    int index = NB_BUS_X + i;
+    bus[index].id = index + 1;
+    bus[index].ville_depart = 'Y' ;
+    
+    printf("[MAIN] Création du bus %d au départ de %c \n", bus[index].id, bus[index].ville_depart);
+    
+    if(pthread_create(&threads[index], NULL, trajet, (void*) &bus[index]) !=0){
+      perror("Erreur lors de la création du thread");
+      exit(EXIT_FAILURE);
+    }
+  }
+  
   printf("\n [MAIN] Tous les threads ont été créés. Attente de la fin....\n \n");
   
-  //2- on attend la fin de tous les threads
+  //3- on attend la fin de tous les threads
   for(int i=0; i< NB_BUS; i++){
     pthread_join(threads[i], NULL);
     printf("[MAIN] Bus %d a terminé tous ses trajets. \n", bus[i].id);
@@ -148,6 +164,7 @@ int main(){
   
   return 0;
 }
+
 
 
 
