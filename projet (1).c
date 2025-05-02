@@ -30,7 +30,7 @@ typedef struct {
 // FONCTION DU TRAJET D'UN BUS
 
 void entrer_tunnel(char ville_depart){
-  pthread_mutex_lock(&mutex); //Bus demande à entrer dans le tunnel, entrée dans SC
+  pthread_mutex_lock(&mutex); //Bus demande à entrer dans le tunnel
   
   if(ville_depart == 'X'){
     attente_x++; //On signale que ce bus ettend à X
@@ -50,7 +50,7 @@ void entrer_tunnel(char ville_depart){
     attente_y++;
     while(sens == 1 || (sens ==0 && attente_x > 0 )){
       pthread_mutex_unlock(&mutex);
-      usleep(100000); //Attente de 0.1 seconde
+      usleep(100000);
       pthread_mutex_lock(&mutex);
     } 
     attente_y--;  //ce bus n'attend plus, il va entrer
