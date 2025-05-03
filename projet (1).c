@@ -1,167 +1,149 @@
-#include<stdio.h>
-#include<stdlib.h>
-#include<pthread.h>
-#include<semaphore.h>
-#include<unistd.h>
-#include<time.h>
-
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <time.h>
 
 #define NB_BUS 9
 #define NB_BUS_X 5
 #define NB_BUS_Y 4
 #define NB_ALLER_RETOUR 10
 
-// Sémaphores et variables de controle
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER; //protéger les variables partagées
-sem_t tunnel;
-int sens = 0; // 0:vide,  1: X--> Y,  -1:Y--> X
-int bus_dans_tunnel=0; // cmpt du nbr de bus actuellement dans le tunnel
-int attente_x = 0; //nbr de bus en attente à X
-int attente_y = 0; //nbr de bus en attente à Y
+// Variables de contrôle
+int sens = 0;  // 0 = vide, 1 = X->Y, -1 = Y->X
+int bus_dans_tunnel = 0;
+int attente_x = 0;
+int attente_y = 0;
 
+// Synchronisation
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+sem_t sem_x;
+sem_t sem_y;
 
-//chaque thread va recevoir un objet Bus (id + ville_depart) 
+// Structure pour passer les infos à chaque thread
 typedef struct {
   int id;
   char ville_depart;
-} Bus;  
+} Bus;
 
+void entrer_tunnel(char ville_depart) {
+  pthread_mutex_lock(&mutex);
 
-// FONCTION DU TRAJET D'UN BUS
-
-void entrer_tunnel(char ville_depart){
-  pthread_mutex_lock(&mutex); //Bus demande à entrer dans le tunnel, entrée dans SC
-  
-  if(ville_depart == 'X'){
-    attente_x++; //On signale que ce bus ettend à X
-    
-    // s'il y a des bus dans l'autre sens (sens == -1) il attend
-    // si le tunnel est vide (sens ==0) on donne la priorité à la ville qui attend depuis plus longtemps
-    //une fois les condition remplies ,on autorise l'entrée dans le tunnel et on définit le sens
-    while(sens == -1 || (sens ==0 && attente_y > 0 )){
+  if (ville_depart == 'X') {
+    attente_x++;
+    while (sens == -1 || (sens == 0 && attente_y > 0)) {
       pthread_mutex_unlock(&mutex);
-      usleep(100000); //Attente de 0.1 seconde
+      sem_wait(&sem_x);
       pthread_mutex_lock(&mutex);
-    } 
-    attente_x--;  //ce bus n'attend plus, il va entrer
+    }
+    attente_x--;
     sens = 1;
-  
-  }else{ 
+  } else {
     attente_y++;
-    while(sens == 1 || (sens ==0 && attente_x > 0 )){
+    while (sens == 1 || (sens == 0 && attente_x > 0)) {
       pthread_mutex_unlock(&mutex);
-      usleep(100000); //Attente de 0.1 seconde
+      sem_wait(&sem_y);
       pthread_mutex_lock(&mutex);
-    } 
-    attente_y--;  //ce bus n'attend plus, il va entrer
+    }
+    attente_y--;
     sens = -1;
-    
   }
-  // on augmente le nbr de bus dans le tunnel, et on libère le verrou
+
   bus_dans_tunnel++;
   pthread_mutex_unlock(&mutex);
 }
 
+void sortir_tunnel() {
+  pthread_mutex_lock(&mutex);
+  bus_dans_tunnel--;
 
-
-
-void sortir_tunnel(){
-
-  pthread_mutex_lock(&mutex);  
-  bus_dans_tunnel--; // Un bus sort du tunnel
-  
-  if(bus_dans_tunnel==0){
-    if((sens ==1 && attente_y > 0) || (sens ==-1 && attente_x > 0)){
-      sens = -sens;
-    } else if(attente_x ==0 && attente_y ==0){
-      sens = 0; //tunnel libre
+  if (bus_dans_tunnel == 0) {
+    if (sens == 1 && attente_y > 0) {
+      sens = -1;
+      for (int i = 0; i < attente_y; i++) sem_post(&sem_y);
+    } else if (sens == -1 && attente_x > 0) {
+      sens = 1;
+      for (int i = 0; i < attente_x; i++) sem_post(&sem_x);
+    } else {
+      sens = 0;
     }
   }
-  pthread_mutex_unlock(&mutex); //On libère le verrou
+
+  pthread_mutex_unlock(&mutex);
 }
 
+void* trajet(void* arg) {
+  Bus* bus = (Bus*) arg;
+  char depart = bus->ville_depart;
+  char arrivee = (depart == 'X') ? 'Y' : 'X';
 
-//FONCTION PRINCIPALE DE CHAQUE THREAD
+  for (int i = 0; i < NB_ALLER_RETOUR; i++) {
+    printf("Bus %d attend pour aller de %c vers %c\n", bus->id, depart, arrivee);
+    entrer_tunnel(depart);
+    printf("Bus %d entre dans le tunnel pour aller de %c vers %c\n", bus->id, depart, arrivee);
 
-void* trajet(void* arg){
-  Bus* bus = (Bus*) arg; //Récupération des infos du bus
-  char ville_depart = bus->ville_depart;
-  char ville_arrivee = (ville_depart == 'X') ? 'Y' : 'X';
-  
-  for(int i=0; i< NB_ALLER_RETOUR; i++){
-    // Annonce qu'il attend
-    printf("Bus %d attend pour aller de %c vers %c \n", bus->id, ville_depart, ville_arrivee);
-    
-    // Entrée dans le tunnel
-    entrer_tunnel(ville_depart);
-    printf("Bus %d entre dans le tunnel pour aller de %c vers %c \n", bus->id, ville_depart, ville_arrivee);
-    
-    // Simulation du trajet 
-    // Simulation du trajet (aléatoire entre 1 et 1.5 sec)
-    int temps = 1000000 + rand() %500001; 
-    usleep(temps);
-    
-    // Sortir du tunnel
+    int temps = 1000000 + rand() % 500001;
+    usleep(temps); // Simulation du trajet
+
     sortir_tunnel();
-    printf("Bus %d est sorti du tunnel à %c \n", bus->id, ville_arrivee);
-    
-    // changement de direction pour le trajet retour
-    char temp = ville_depart;
-    ville_depart = ville_arrivee;
-    ville_arrivee = temp;
+    printf("Bus %d est sorti du tunnel à %c\n", bus->id, arrivee);
+
+    // Changement de direction
+    char tmp = depart;
+    depart = arrivee;
+    arrivee = tmp;
   }
-  pthread_exit(NULL); // Fin du thread
+
+  pthread_exit(NULL);
 }
 
+int main() {
+  pthread_t threads[NB_BUS];
+  Bus bus[NB_BUS];
 
-// Variables globales
-pthread_t threads[NB_BUS];
-Bus bus[NB_BUS];
+  srand(time(NULL));
+  sem_init(&sem_x, 0, 0);
+  sem_init(&sem_y, 0, 0);
 
-int main(){
-  srand(time(NULL)); // 
-  
-  printf("===== DEMARRAGE DU SYSTEME ======\n \n");
-  
-  //1- Création des 5 bus de X
-  printf("[MAIN] Création les 5 bus de 'X' \n");
-  for(int i=0; i< NB_BUS_X; i++){
-    bus[i].id = i+1;
-    bus[i].ville_depart = 'X' ;
-    
+  printf("===== DEMARRAGE DU SYSTEME ======\n\n");
+
+  // Création des 5 bus de X
+   printf("[MAIN] Création les 5 bus de 'X' \n");
+  for (int i = 0; i < NB_BUS_X; i++) {
+    bus[i].id = i + 1;
+    bus[i].ville_depart = 'X';
     printf("[MAIN] Création du bus %d au départ de %c \n", bus[i].id, bus[i].ville_depart);
-    
-    if(pthread_create(&threads[i], NULL, trajet, (void*) &bus[i]) !=0){
-      perror("Erreur lors de la création du thread");
+    if (pthread_create(&threads[i], NULL, trajet, &bus[i]) != 0) {
+      perror("Erreur création thread");
       exit(EXIT_FAILURE);
     }
-  }
-  
-  //2- Création des 4 bus de Y
-  printf("[MAIN] Création les 4 bus de 'Y' \n");
-  for(int i=0; i< NB_BUS_Y; i++){
-    int index = NB_BUS_X + i;
-    bus[index].id = index + 1;
-    bus[index].ville_depart = 'Y' ;
-    
-    printf("[MAIN] Création du bus %d au départ de %c \n", bus[index].id, bus[index].ville_depart);
-    
-    if(pthread_create(&threads[index], NULL, trajet, (void*) &bus[index]) !=0){
-      perror("Erreur lors de la création du thread");
-      exit(EXIT_FAILURE);
-    }
-  }
-  
-  printf("\n [MAIN] Tous les threads ont été créés. Attente de la fin....\n \n");
-  
-  //3- on attend la fin de tous les threads
-  for(int i=0; i< NB_BUS; i++){
-    pthread_join(threads[i], NULL);
-    printf("[MAIN] Bus %d a terminé tous ses trajets. \n", bus[i].id);
   }
 
-  printf("\n ======== TOUS LES BUS ONT TERMINE======\n");
-  
+  // Création des 4 bus de Y
+  printf("[MAIN] Création les 4 bus de 'Y' \n");
+  for (int i = 0; i < NB_BUS_Y; i++) {
+    int idx = NB_BUS_X + i;
+    bus[idx].id = idx + 1;
+    bus[idx].ville_depart = 'Y';
+    printf("[MAIN] Création du bus %d au départ de %c \n", bus[idx].id, bus[idx].ville_depart);
+    
+    if (pthread_create(&threads[idx], NULL, trajet, &bus[idx]) != 0) {
+      perror("Erreur création thread");
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  // Attente des threads
+  for (int i = 0; i < NB_BUS; i++) {
+    pthread_join(threads[i], NULL);
+    printf("[MAIN] Bus %d a terminé.\n", bus[i].id);
+  }
+
+  sem_destroy(&sem_x);
+  sem_destroy(&sem_y);
+
+  printf("\n===== TOUS LES BUS ONT TERMINE =====\n");
   return 0;
 }
 
